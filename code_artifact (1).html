@@ -1,0 +1,1495 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>木製御朱印帳フィッシング | moku-zakka</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+  * {
+    box-sizing: border-box;
+    user-select: none;
+    -webkit-user-select: none;
+    font-family: 'Noto Sans JP', sans-serif;
+  }
+  body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background-color: #1c0f0a;
+    touch-action: manipulation;
+  }
+  #game-container {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  .glass-panel {
+    background: rgba(43, 24, 16, 0.85);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(217, 119, 6, 0.3);
+  }
+  .custom-scroll::-webkit-scrollbar {
+    width: 6px;
+  }
+  .custom-scroll::-webkit-scrollbar-track {
+    background: rgba(28, 15, 10, 0.6);
+    border-radius: 4px;
+  }
+  .custom-scroll::-webkit-scrollbar-thumb {
+    background: rgba(217, 119, 6, 0.6);
+    border-radius: 4px;
+  }
+  .action-btn {
+    transition: transform 0.08s ease, box-shadow 0.08s ease, background-color 0.2s;
+    box-shadow: 0 6px 0 rgba(43, 24, 16, 0.7), 0 10px 20px rgba(0, 0, 0, 0.5);
+  }
+  .action-btn:active:not(:disabled) {
+    transform: translateY(4px);
+    box-shadow: 0 2px 0 rgba(43, 24, 16, 0.7), 0 4px 10px rgba(0, 0, 0, 0.4);
+  }
+  @keyframes pulse-fast {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.06); }
+  }
+  .animate-hit {
+    animation: pulse-fast 0.35s infinite;
+  }
+  @keyframes float-up {
+    0% { opacity: 0; transform: translateY(15px) scale(0.95); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .modal-enter {
+    animation: float-up 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+</style>
+</head>
+<body>
+
+<div id="game-container">
+  <!-- メイン描画キャンバス -->
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- 上部最新HUD & メニュー -->
+  <header class="absolute top-0 left-0 right-0 p-3 sm:p-5 flex flex-wrap justify-between items-center gap-2 z-10 pointer-events-none">
+    <div class="flex items-center gap-2.5 sm:gap-3.5 pointer-events-auto">
+      <div class="glass-panel px-4 py-2 sm:px-5 sm:py-2.5 rounded-2xl flex items-center gap-3">
+        <span class="text-2xl sm:text-3xl filter drop-shadow">⛩️</span>
+        <div>
+          <h1 class="text-amber-200 font-black text-xs sm:text-sm tracking-wider leading-none">名工銘鈑 釣魚庵</h1>
+          <div class="text-amber-400 font-black text-base sm:text-lg mt-0.5 flex items-center gap-1.5">
+            <span>🪙</span><span id="goldDisplay">300</span> <span class="text-xs text-amber-200/70 font-bold">文</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-2 pointer-events-auto">
+      <button onclick="openModal('shopModal')" class="action-btn bg-gradient-to-b from-amber-500 to-amber-700 hover:from-amber-400 hover:to-amber-600 text-slate-950 font-black px-3.5 py-2.5 sm:px-5 sm:py-3 rounded-2xl text-xs sm:text-sm flex items-center gap-1.5 border border-amber-300/60 shadow-lg">
+        <span>🛒</span><span>釣具ショップ</span>
+      </button>
+      <button onclick="openModal('dexModal')" class="action-btn bg-gradient-to-b from-amber-700 to-amber-900 hover:from-amber-600 hover:to-amber-800 text-amber-100 font-black px-3.5 py-2.5 sm:px-5 sm:py-3 rounded-2xl text-xs sm:text-sm flex items-center gap-1.5 border border-amber-500/50 relative">
+        <span>📖</span><span>図鑑</span>
+        <span id="dexBadge" class="bg-amber-950 text-amber-300 text-[10px] px-2 py-0.5 rounded-full ml-0.5 border border-amber-700">0/15</span>
+      </button>
+      <button id="muteBtn" onclick="toggleMute()" class="glass-panel hover:bg-[#3e2317] text-amber-100 p-2.5 sm:p-3 rounded-2xl text-sm sm:text-base transition" title="音声切替">
+        🔊
+      </button>
+    </div>
+  </header>
+
+  <!-- 中央上部：状況アナウンス -->
+  <div class="absolute top-16 sm:top-24 left-1/2 -translate-x-1/2 z-10 pointer-events-none w-11/12 max-w-md text-center">
+    <div id="statusText" class="inline-block glass-panel font-bold text-sm sm:text-base px-6 py-2.5 rounded-full shadow-2xl transition-all border border-amber-500/50 text-amber-100">
+      ボタン長押し（またはスペースキー）で川面へ糸を垂れる！
+    </div>
+  </div>
+
+  <!-- ファイト中専用HUD -->
+  <div id="fightHud" class="hidden absolute top-32 sm:top-36 left-1/2 -translate-x-1/2 z-10 w-11/12 max-w-md glass-panel p-4 rounded-2xl shadow-2xl pointer-events-none border border-amber-600/60">
+    <div class="flex justify-between items-center mb-2.5">
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-amber-200/70 font-bold">残り距離</span>
+        <span id="distanceDisplay" class="text-xl sm:text-2xl font-black text-amber-400">25.0<span class="text-xs ml-0.5">m</span></span>
+      </div>
+      <div id="itemStateBadge" class="px-3 py-1 rounded-full text-xs font-black bg-amber-500/20 text-amber-300 border border-amber-500/40">
+        🍃 穏やかな流れ（巻き時！）
+      </div>
+    </div>
+
+    <!-- テンションゲージ -->
+    <div class="space-y-1.5">
+      <div class="flex justify-between text-xs font-bold">
+        <span class="text-amber-200">糸のテンション（張力耐性）</span>
+        <span id="tensionPercent" class="text-amber-400">35%</span>
+      </div>
+      <div class="w-full h-4 bg-[#140b07] rounded-full overflow-hidden p-0.5 border border-amber-900">
+        <div id="tensionBar" class="h-full rounded-full transition-all duration-75 bg-gradient-to-r from-teal-400 via-amber-400 to-rose-600" style="width: 35%;"></div>
+      </div>
+      <div class="flex justify-between text-[10px] text-amber-300/70 px-1">
+        <span>緩みすぎ(注意)</span>
+        <span>適正</span>
+        <span class="text-rose-400 font-bold">危険(糸切れ!)</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- キャストパワーゲージ -->
+  <div id="castHud" class="hidden absolute bottom-32 sm:bottom-36 left-1/2 -translate-x-1/2 z-10 w-72 sm:w-80 glass-panel p-3.5 rounded-2xl shadow-2xl pointer-events-none border border-amber-500/50">
+    <div class="flex justify-between text-xs font-bold text-amber-300 mb-1.5">
+      <span>キャストパワー</span>
+      <span id="castDistancePreview">飛距離: 10m (手前)</span>
+    </div>
+    <div class="w-full h-5 bg-[#140b07] rounded-full overflow-hidden p-0.5 border border-amber-900">
+      <div id="castBar" class="h-full rounded-full bg-gradient-to-r from-amber-500 via-orange-400 to-yellow-300" style="width: 0%;"></div>
+    </div>
+  </div>
+
+  <!-- 下部メイン操作ボタン -->
+  <div class="absolute bottom-6 sm:bottom-8 left-1/2 -translate-x-1/2 z-10 flex items-center justify-center gap-3 w-11/12 max-w-lg">
+    <button id="mainActionBtn" class="action-btn flex-1 max-w-sm bg-gradient-to-b from-amber-500 via-amber-600 to-amber-800 text-slate-950 font-black text-base sm:text-xl py-4 px-6 sm:py-5 sm:px-8 rounded-3xl border border-amber-300 tracking-wide shadow-2xl">
+      🎣 長押しで糸を垂れる
+    </button>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- 釣果リザルトモーダル -->
+  <!-- ========================================== -->
+  <div id="resultModal" class="hidden fixed inset-0 z-30 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="modal-enter glass-panel border-2 border-amber-400/80 w-full max-w-sm rounded-3xl p-5 sm:p-6 text-center shadow-2xl relative overflow-hidden">
+      <div class="absolute -top-20 left-1/2 -translate-x-1/2 w-64 h-64 bg-amber-400/15 rounded-full blur-3xl pointer-events-none"></div>
+      
+      <div id="newRecordBadge" class="hidden inline-block bg-gradient-to-r from-amber-600 to-amber-400 text-slate-950 text-xs font-black px-3 py-1 rounded-full mb-2 shadow">
+        ✨ NEW RECORD / 初発見！
+      </div>
+      <div id="resultRarity" class="text-amber-400 text-lg sm:text-xl tracking-widest font-black mb-1">★★★★★</div>
+      <h2 id="resultItemName" class="text-xl sm:text-2xl font-black text-amber-100 mb-3">ご当地デザイン 名古屋城と金シャチの木製御朱印帳「 なごや」</h2>
+
+      <div class="bg-[#140b07] border border-amber-900/80 rounded-2xl p-3 mb-4 flex items-center justify-center shadow-inner">
+        <canvas id="resultItemCanvas" width="260" height="130" class="w-full max-w-[260px] h-[130px]"></canvas>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2 bg-[#2b1810]/80 border border-amber-900/80 rounded-2xl p-3 mb-4">
+        <div>
+          <div class="text-[11px] text-amber-300/80 font-bold">売却価格</div>
+          <div id="resultPrice" class="text-base sm:text-lg font-black text-amber-400">+3,300 文</div>
+        </div>
+        <div>
+          <div class="text-[11px] text-amber-300/80 font-bold">カテゴリ</div>
+          <div id="resultType" class="text-base sm:text-lg font-black text-amber-100">木製御朱印帳</div>
+        </div>
+      </div>
+
+      <p id="resultDesc" class="text-xs sm:text-sm text-amber-200/90 mb-4 leading-relaxed">
+        名古屋城モチーフと金シャチが輝く極上の木製御朱印帳。
+      </p>
+
+      <div class="space-y-2.5">
+        <button onclick="closeResultModal()" class="w-full action-btn bg-gradient-to-b from-amber-400 via-amber-500 to-amber-700 text-slate-950 font-black text-base sm:text-lg py-3.5 rounded-2xl border border-amber-200 shadow-xl">
+          💰 売却して文を手に入れる
+        </button>
+        <a id="resultShopLink" href="https://mokuzakka.theshop.jp/items/159183915" target="_blank" class="block w-full bg-[#1a0f0a] hover:bg-[#2b1810] text-amber-200 font-bold text-xs sm:text-sm py-2.5 rounded-2xl transition border border-amber-800">
+          🛒 この商品の公式サイトを見る
+        </a>
+        <button onclick="shareOnX()" class="w-full action-btn bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs py-2 rounded-xl shadow-lg">
+          🐦 X (Twitter) でシェア
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- 図鑑モーダル -->
+  <!-- ========================================== -->
+  <div id="dexModal" class="hidden fixed inset-0 z-30 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="modal-enter glass-panel border border-amber-500/60 w-full max-w-2xl rounded-3xl p-5 sm:p-6 shadow-2xl flex flex-col max-h-[88vh]">
+      <div class="flex justify-between items-center pb-3 border-b border-amber-900/80">
+        <div>
+          <h2 class="text-xl font-black text-amber-100 flex items-center gap-2"><span>📖</span> moku-zakka 製品図鑑</h2>
+          <p class="text-xs text-amber-300/80 mt-0.5">コンプリート率: <span id="dexCompletionText" class="text-amber-400 font-bold">0 / 15 種類 (0%)</span></p>
+        </div>
+        <button onclick="closeModal('dexModal')" class="text-amber-300 hover:text-white text-2xl leading-none font-bold">&times;</button>
+      </div>
+
+      <div id="dexGridContainer" class="py-4 grid grid-cols-2 sm:grid-cols-3 gap-3 overflow-y-auto custom-scroll flex-1">
+        <!-- JS生成 -->
+      </div>
+
+      <div class="pt-3 border-t border-amber-900/80 flex flex-col sm:flex-row gap-2.5">
+        <a href="https://mokuzakka.theshop.jp/" target="_blank" class="flex-1 text-center bg-gradient-to-b from-amber-400 via-amber-500 to-amber-700 text-slate-950 font-black py-3 rounded-2xl text-sm shadow-xl">
+          🛒 moku-zakka 公式ショップを見る
+        </a>
+        <button onclick="closeModal('dexModal')" class="bg-[#1a0f0a] hover:bg-[#2b1810] text-amber-200 font-bold px-6 py-3 rounded-2xl transition border border-amber-800">
+          閉じる
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========================================== -->
+  <!-- ショップ（釣具強化）モーダル -->
+  <!-- ========================================== -->
+  <div id="shopModal" class="hidden fixed inset-0 z-30 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+    <div class="modal-enter glass-panel border border-amber-500/60 w-full max-w-md rounded-3xl p-5 sm:p-6 shadow-2xl flex flex-col max-h-[88vh]">
+      <div class="flex justify-between items-center pb-3 border-b border-amber-900/80">
+        <div class="flex items-center gap-2">
+          <span class="text-2xl">🛒</span>
+          <h2 class="text-xl font-black text-amber-100">匠の釣具ショップ</h2>
+        </div>
+        <div class="flex items-center gap-3">
+          <span class="text-amber-400 font-black text-sm bg-[#140b07] px-3 py-1 rounded-full border border-amber-800">🪙 <span id="shopGoldDisplay">0</span> 文</span>
+          <button onclick="closeModal('shopModal')" class="text-amber-300 hover:text-white text-2xl leading-none font-bold">&times;</button>
+        </div>
+      </div>
+
+      <div id="shopItemsContainer" class="py-4 space-y-3 overflow-y-auto custom-scroll flex-1">
+        <!-- JS生成 -->
+      </div>
+
+      <button onclick="closeModal('shopModal')" class="mt-2 w-full bg-[#1a0f0a] hover:bg-[#2b1810] text-amber-200 font-bold py-3 rounded-2xl transition border border-amber-800">
+        閉じる
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+/**
+ * moku-zakka 実際の販売商品データベース（全15種・すべて実在する正規URLに修正済）
+ */
+const ITEM_DATABASE = [
+  { id: 'gosyuin_nagoya', name: '木製御朱印帳「なごや」', rarity: 5, basePrice: 3300, power: 4.8, stamina: 110, minDist: 25, maxDist: 100, type: '木製御朱印帳', url: 'https://mokuzakka.theshop.jp/items/159183915', colors: ['#f472b6', '#fef08a', '#92400e'], shape: 'gosyuin', desc: '名古屋城・金シャチ・タワー・桜を描いたプレミアムな木製御朱印帳。' },
+  { id: 'shinto_kanau', name: '組み立て式神棚「叶 -kanau-」', rarity: 4, basePrice: 2750, power: 3.8, stamina: 85, minDist: 18, maxDist: 85, type: '木製神棚', url: 'https://mokuzakka.theshop.jp/items/110366867', colors: ['#b45309', '#fef3c7', '#78350f'], shape: 'shinto', desc: 'どこでも祀れる現代の暮らしに寄り添うスタイリッシュな木製神棚。' },
+  { id: 'gosyuin_hishigiku', name: 'ポケット式御朱印帳「菱菊」', rarity: 4, basePrice: 2475, power: 3.6, stamina: 80, minDist: 16, maxDist: 80, type: '木製御朱印帳', url: 'https://mokuzakka.theshop.jp/items/162544158', colors: ['#d97706', '#fef3c7', '#92400e'], shape: 'gosyuin', desc: '木のぬくもりにふわりと菊模様が咲くポケット式和モダンデザイン。' },
+  { id: 'gosyuin_hatokira', name: '推し活祈願「きらきら星」', rarity: 4, basePrice: 2970, power: 3.5, stamina: 78, minDist: 15, maxDist: 75, type: '木製御朱印帳', url: 'https://mokuzakka.theshop.jp/items/128155887', colors: ['#38bdf8', '#fef08a', '#0284c7'], shape: 'gosyuin', desc: '推し活祈願や神社仏閣巡りに最適なカジュアル木製御朱印帳。' },
+  { id: 'oshidana', name: '木製推し祭壇「推し棚」', rarity: 3, basePrice: 1782, power: 2.8, stamina: 60, minDist: 12, maxDist: 60, type: '推し活雑貨', url: 'https://mokuzakka.theshop.jp/items/110189226', colors: ['#78350f', '#fde68a', '#451a03'], shape: 'shelf', desc: 'お気に入りのアクスタや推しグッズを飾って楽しめる組み立て式祭壇。' },
+  { id: 'gosyuin_nyan', name: 'ゆる猫木製御朱印帳「にゃん」', rarity: 3, basePrice: 3300, power: 2.6, stamina: 55, minDist: 10, maxDist: 55, type: '木製御朱印帳', url: 'https://mokuzakka.theshop.jp/items/136504208', colors: ['#b45309', '#fef3c7', '#a16207'], shape: 'gosyuin', desc: 'のんびり猫たちと気ままに御朱印さんぽを楽しめるほっこりデザイン。' },
+  { id: 'gosyuin_neko', name: 'ほっこり猫柄の御朱印帳「ねこ」', rarity: 3, basePrice: 3300, power: 2.5, stamina: 52, minDist: 10, maxDist: 52, type: '木製御朱印帳', url: 'https://mokuzakka.theshop.jp/items/136503192', colors: ['#92400e', '#ffedd5', '#78350f'], shape: 'gosyuin', desc: 'やさしさとかわいらしさを感じられる人気の猫柄木製御朱印帳。' },
+  { id: 'gosyuin_kagome', name: '和モダン御朱印帳「籠目」', rarity: 3, basePrice: 3300, power: 2.7, stamina: 58, minDist: 11, maxDist: 58, type: '木製御朱印帳', url: 'https://mokuzakka.theshop.jp/items/109966190', colors: ['#451a03', '#fef3c7', '#78350f'], shape: 'gosyuin', desc: '伝統的な和模様を取り入れた洗練されたかわいらしさの御朱印帳。' },
+  { id: 'saisenbox', name: '組み立て式「推し活 賽銭箱」', rarity: 2, basePrice: 1485, power: 1.8, stamina: 35, minDist: 8, maxDist: 40, type: '推し活雑貨', url: 'https://mokuzakka.theshop.jp/items/110284341', colors: ['#dc2626', '#fef08a', '#991b1b'], shape: 'box', desc: '推しへの貢ぎ物…ではなくお賽銭を入れて推し活を盛り上げるミニ賽銭箱。' },
+  { id: 'band_seigaiha', name: '御朱印帳バンド「青海波」', rarity: 2, basePrice: 550, power: 1.5, stamina: 30, minDist: 6, maxDist: 35, type: '御朱印帳バンド', url: 'https://mokuzakka.theshop.jp/items/125664453', colors: ['#1e3a8a', '#93c5fd', '#1d4ed8'], shape: 'band', desc: '刀の鍔（つば）がモチーフの和モダンな木製御朱印帳バンド。' },
+  { id: 'band_toraneko', name: '虚無顔ねこ「にゃんバンド」', rarity: 2, basePrice: 550, power: 1.4, stamina: 28, minDist: 6, maxDist: 32, type: '御朱印帳バンド', url: 'https://mokuzakka.theshop.jp/items/136740328', colors: ['#d97706', '#fef3c7', '#b45309'], shape: 'band', desc: '虚無顔のねこが御朱印帳の広がりをしっかり留めてくれる便利グッズ。' },
+  { id: 'band_umemusubi', name: '木製御朱印帳バンド「梅結び」', rarity: 2, basePrice: 550, power: 1.5, stamina: 30, minDist: 6, maxDist: 35, type: '御朱印帳バンド', url: 'https://mokuzakka.theshop.jp/items/110895414', colors: ['#e11d48', '#fbcfe8', '#be123c'], shape: 'band', desc: '縁起の良い梅結びの水引風デザインを木製で表現したお洒落なバンド。' },
+  { id: 'charm_ayugashi', name: 'あゆ菓子 アクリルチャーム', rarity: 1, basePrice: 330, power: 1.0, stamina: 20, minDist: 5, maxDist: 25, type: 'アクリルチャーム', url: 'https://mokuzakka.theshop.jp/items/164168351', colors: ['#d97706', '#fef3c7', '#b45309'], shape: 'charm', desc: '岐阜・名古屋の定番銘菓「若鮎」をモチーフにした目を惹くアクリルチャーム。' },
+  { id: 'charm_broccoli', name: 'オッケーブロッコリーチャム', rarity: 1, basePrice: 330, power: 1.0, stamina: 19, minDist: 5, maxDist: 24, type: 'アクリルチャーム', url: 'https://mokuzakka.theshop.jp/items/156782240', colors: ['#15803d', '#bbf7d0', '#166534'], shape: 'charm', desc: '傘やバッグの目印にぴったりのブロッコリーのユニークなアクセサリー。' },
+  { id: 'charm_hato', name: 'オーロラ「はとチャム」', rarity: 1, basePrice: 440, power: 0.9, stamina: 18, minDist: 5, maxDist: 22, type: 'アクリルチャーム', url: 'https://mokuzakka.theshop.jp/items/163105342', colors: ['#38bdf8', '#f472b6', '#ffffff'], shape: 'charm', desc: 'ゆるい手書き風の鳩がオーロラ色にきらめくユニークなアクリルチャーム。' }
+];
+
+/**
+ * 釣具ショップ強化設定
+ */
+const UPGRADE_CONFIG = {
+  rod: {
+    name: '特製漆塗り釣り竿（ロッド）',
+    icon: '🎣',
+    desc: '糸の強度（テンション限界耐性）と最大飛距離がアップ',
+    maxLevel: 10,
+    baseCost: 350,
+    costMult: 1.6,
+    getEffectText: (lv) => `テンション耐性 +${(lv - 1) * 12}% / 最大飛距離 ${40 + (lv - 1) * 7}m`
+  },
+  reel: {
+    name: '精巧木製リール（巻き取り）',
+    icon: '⚙️',
+    desc: 'アイテムを引き寄せるパワー（巻き取り速度）がアップ',
+    maxLevel: 10,
+    baseCost: 350,
+    costMult: 1.6,
+    getEffectText: (lv) => `引き寄せスピード +${(lv - 1) * 15}%`
+  },
+  lure: {
+    name: '秘伝の特製撒き餌（えさ）',
+    icon: '🌾',
+    desc: 'レア度★3〜★5の御朱印帳や上位お宝の出現確率がアップ',
+    maxLevel: 10,
+    baseCost: 400,
+    costMult: 1.65,
+    getEffectText: (lv) => `レアアイテム出現率 +${(lv - 1) * 15}%`
+  }
+};
+
+/**
+ * ゲームセーブデータ管理
+ */
+const SAVE_KEY = 'moku_zakka_fishing_save_v3';
+
+let saveData = {
+  gold: 500,
+  rodLv: 1,
+  reelLv: 1,
+  lureLv: 1,
+  dex: {} // 最初は空っぽ
+};
+
+function loadSaveData() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      saveData = { ...saveData, ...parsed };
+    }
+  } catch (e) {
+    console.warn('セーブデータの読み込みに失敗しました:', e);
+  }
+}
+
+function writeSaveData() {
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(saveData));
+  } catch (e) {
+    console.warn('セーブデータの保存に失敗しました:', e);
+  }
+}
+
+/**
+ * Web Audio API サウンド合成エンジン
+ */
+class SoundEngine {
+  constructor() {
+    this.ctx = null;
+    this.muted = false;
+    this.lastReelTick = 0;
+  }
+
+  init() {
+    if (!this.ctx) {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) this.ctx = new AudioCtx();
+    }
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume();
+    }
+  }
+
+  toggleMute() {
+    this.muted = !this.muted;
+    return this.muted;
+  }
+
+  playCast() {
+    if (this.muted) return;
+    this.init();
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    const dur = 0.28;
+    const bufSize = this.ctx.sampleRate * dur;
+    const buf = this.ctx.createBuffer(1, bufSize, this.ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < bufSize; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.sin((i / bufSize) * Math.PI);
+    }
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = buf;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(300, now);
+    filter.frequency.exponentialRampToValueAtTime(1400, now + dur * 0.6);
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0.4, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + dur);
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.ctx.destination);
+    noise.start(now);
+  }
+
+  playSplash() {
+    if (this.muted) return;
+    this.init();
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(220, now);
+    osc.frequency.exponentialRampToValueAtTime(650, now + 0.14);
+    gain.gain.setValueAtTime(0.35, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.15);
+  }
+
+  playNibble() {
+    if (this.muted) return;
+    this.init();
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(300, now);
+    osc.frequency.exponentialRampToValueAtTime(150, now + 0.08);
+    gain.gain.setValueAtTime(0.25, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.08);
+  }
+
+  playBiteAlert() {
+    if (this.muted) return;
+    this.init();
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    [523.25, 783.99, 1046.5].forEach((freq, i) => {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(freq, now + i * 0.03);
+      gain.gain.setValueAtTime(0.2, now + i * 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.03 + 0.22);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(now + i * 0.03);
+      osc.stop(now + i * 0.03 + 0.22);
+    });
+  }
+
+  playReelTick(tensionRatio = 0.3) {
+    if (this.muted) return;
+    this.init();
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    if (now - this.lastReelTick < 0.055) return;
+    this.lastReelTick = now;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'square';
+    const freq = 800 + tensionRatio * 1200;
+    osc.frequency.setValueAtTime(freq, now);
+    gain.gain.setValueAtTime(0.1, now);
+    gain.gain.exponentialRampToValueAtTime(0.005, now + 0.02);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.02);
+  }
+
+  playFail() {
+    if (this.muted) return;
+    this.init();
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(250, now);
+    osc.frequency.linearRampToValueAtTime(90, now + 0.4);
+    gain.gain.setValueAtTime(0.25, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.4);
+  }
+
+  playSuccess(rarity = 1) {
+    if (this.muted) return;
+    this.init();
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    const notes = rarity >= 4 ? [523.25, 659.25, 783.99, 1046.5, 1318.51, 1567.98] : [523.25, 659.25, 783.99, 1046.5];
+    notes.forEach((freq, i) => {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'triangle';
+      const start = now + i * 0.08;
+      const dur = i === notes.length - 1 ? 0.45 : 0.12;
+      osc.frequency.setValueAtTime(freq, start);
+      gain.gain.setValueAtTime(0.25, start);
+      gain.gain.exponentialRampToValueAtTime(0.01, start + dur);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(start);
+      osc.stop(start + dur);
+    });
+  }
+
+  playBuy() {
+    if (this.muted) return;
+    this.init();
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    [880, 1174.66].forEach((freq, i) => {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now + i * 0.07);
+      gain.gain.setValueAtTime(0.25, now + i * 0.07);
+      gain.gain.exponentialRampToValueAtTime(0.01, now + i * 0.07 + 0.18);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(now + i * 0.07);
+      osc.stop(now + i * 0.07 + 0.18);
+    });
+  }
+}
+
+const sound = new SoundEngine();
+
+/**
+ * ゲームエンジン & キャンバス描画
+ */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+let gameState = 'IDLE'; // 'IDLE' | 'CASTING' | 'WAITING' | 'BITING' | 'FIGHTING' | 'RESULT'
+let castPower = 0;
+let castDirection = 1;
+let castDistance = 0;
+let bobberPos = { x: 0, y: 0, targetX: 0, targetY: 0, vy: 0, submerge: 0 };
+let ripples = [];
+let splashes = [];
+let bgShadows = [];
+let targetShadow = null;
+
+let waitTimer = 0;
+let nibbleCount = 0;
+let maxNibbles = 2;
+let biteWindowTimer = 0;
+let hookedItem = null;
+let itemDistance = 0;
+let tension = 25;
+let isReeling = false;
+let itemStruggling = false;
+let itemStateTimer = 0;
+let rodBend = 0;
+let screenShake = 0;
+let lastEarnedGold = 0;
+
+const goldDisplay = document.getElementById('goldDisplay');
+const statusText = document.getElementById('statusText');
+const mainActionBtn = document.getElementById('mainActionBtn');
+const castHud = document.getElementById('castHud');
+const castBar = document.getElementById('castBar');
+const castDistancePreview = document.getElementById('castDistancePreview');
+const fightHud = document.getElementById('fightHud');
+const distanceDisplay = document.getElementById('distanceDisplay');
+const tensionBar = document.getElementById('tensionBar');
+const tensionPercent = document.getElementById('tensionPercent');
+const itemStateBadge = document.getElementById('itemStateBadge');
+
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  initBgShadows();
+}
+window.addEventListener('resize', resizeCanvas);
+
+function initBgShadows() {
+  bgShadows = [];
+  const waterStartY = canvas.height * 0.48;
+  for (let i = 0; i < 8; i++) {
+    bgShadows.push({
+      x: Math.random() * canvas.width,
+      y: waterStartY + 35 + Math.random() * (canvas.height - waterStartY - 80),
+      size: 18 + Math.random() * 24,
+      speed: (0.3 + Math.random() * 0.5) * (Math.random() < 0.5 ? 1 : -1),
+      wiggle: Math.random() * Math.PI * 2
+    });
+  }
+}
+
+function addRipple(x, y, maxR = 45, alpha = 0.6) {
+  ripples.push({ x, y, r: 4, maxR, alpha });
+}
+
+function addSplash(x, y, count = 12) {
+  for (let i = 0; i < count; i++) {
+    const angle = -Math.PI * (0.15 + Math.random() * 0.7);
+    const speed = 2.5 + Math.random() * 5.5;
+    splashes.push({ x, y, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed - 2, life: 1.0, size: 2 + Math.random() * 3 });
+  }
+}
+
+function getMaxCastDistance() {
+  return 40 + (saveData.rodLv - 1) * 7;
+}
+
+function selectRandomItem(dist) {
+  let candidates = ITEM_DATABASE.filter(item => dist >= item.minDist * 0.8 && dist <= item.maxDist * 1.15);
+  if (candidates.length === 0) candidates = ITEM_DATABASE;
+
+  const lureBonus = (saveData.lureLv - 1) * 0.15;
+  const weighted = candidates.map(item => {
+    let weight = 100 / Math.pow(item.rarity, 1.8);
+    if (item.rarity >= 3) {
+      weight *= (1 + lureBonus * (item.rarity - 1));
+    }
+    return { item, weight };
+  });
+
+  const totalWeight = weighted.reduce((sum, w) => sum + w.weight, 0);
+  let r = Math.random() * totalWeight;
+  for (const w of weighted) {
+    r -= w.weight;
+    if (r <= 0) return w.item;
+  }
+  return candidates[0];
+}
+
+function setStatus(text, colorClass = 'text-amber-100') {
+  statusText.className = `inline-block glass-panel font-bold text-sm sm:text-base px-6 py-2.5 rounded-full shadow-2xl transition-all border border-amber-500/50 ${colorClass}`;
+  statusText.textContent = text;
+}
+
+function updateUIForState() {
+  goldDisplay.textContent = saveData.gold.toLocaleString();
+  const caughtCount = Object.keys(saveData.dex).length;
+  document.getElementById('dexBadge').textContent = `${caughtCount}/${ITEM_DATABASE.length}`;
+
+  castHud.classList.add('hidden');
+  fightHud.classList.add('hidden');
+  mainActionBtn.classList.remove('animate-hit');
+
+  if (gameState === 'IDLE') {
+    setStatus('ボタン長押し（またはスペースキー）で川面へ糸を垂れる！');
+    mainActionBtn.textContent = '🎣 長押しで糸を垂れる';
+    mainActionBtn.className = 'action-btn flex-1 max-w-sm bg-gradient-to-b from-amber-500 via-amber-600 to-amber-800 text-slate-950 font-black text-base sm:text-xl py-4 px-6 sm:py-5 sm:px-8 rounded-3xl border border-amber-300 tracking-wide shadow-2xl';
+  } else if (gameState === 'CASTING') {
+    setStatus('タイミングよく離して投げ入れよう！', 'text-amber-300');
+    castHud.classList.remove('hidden');
+    mainActionBtn.textContent = '🔥 離して投入！';
+  } else if (gameState === 'WAITING') {
+    setStatus(`飛距離 ${castDistance.toFixed(1)}m — お宝が近づくのを待とう...`);
+    mainActionBtn.textContent = '🔄 仕掛けを回収';
+    mainActionBtn.className = 'action-btn flex-1 max-w-xs bg-gradient-to-b from-stone-600 to-stone-800 text-amber-100 font-bold text-sm sm:text-base py-4 px-5 rounded-3xl border border-stone-500/50';
+  } else if (gameState === 'BITING') {
+    setStatus('⚡ 手応えあり！！今すぐ引き上げろ！！ ⚡', 'text-yellow-300');
+    mainActionBtn.textContent = '⚡ アワセる！！';
+    mainActionBtn.className = 'action-btn animate-hit flex-1 max-w-sm bg-gradient-to-b from-amber-400 via-orange-500 to-red-600 text-white font-black text-lg sm:text-2xl py-4 px-6 sm:py-5 sm:px-8 rounded-3xl border-2 border-yellow-200 tracking-wider shadow-2xl';
+  } else if (gameState === 'FIGHTING') {
+    fightHud.classList.remove('hidden');
+    setStatus('長押しで巻き上げ！赤警告時は手を離せ！', 'text-amber-200');
+    mainActionBtn.textContent = '⚙️ 長押しで巻き上げる！';
+    mainActionBtn.className = 'action-btn flex-1 max-w-sm bg-gradient-to-b from-emerald-500 to-teal-700 text-white font-black text-base sm:text-xl py-4 px-6 sm:py-5 sm:px-8 rounded-3xl border border-emerald-300/60 tracking-wide shadow-2xl';
+  }
+}
+
+function handleMainPressStart(e) {
+  if (e) e.preventDefault();
+  sound.init();
+  if (gameState === 'IDLE') {
+    gameState = 'CASTING';
+    castPower = 0;
+    castDirection = 1;
+    updateUIForState();
+  } else if (gameState === 'WAITING') {
+    resetToIdle('仕掛けを回収しました。');
+  } else if (gameState === 'BITING') {
+    startFight();
+  } else if (gameState === 'FIGHTING') {
+    isReeling = true;
+  }
+}
+
+function handleMainPressEnd(e) {
+  if (e) e.preventDefault();
+  if (gameState === 'CASTING') {
+    executeCast();
+  } else if (gameState === 'FIGHTING') {
+    isReeling = false;
+  }
+}
+
+mainActionBtn.addEventListener('pointerdown', handleMainPressStart);
+window.addEventListener('pointerup', handleMainPressEnd);
+
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space' && !e.repeat) {
+    if (document.querySelectorAll('.fixed:not(.hidden)').length === 0) {
+      handleMainPressStart(e);
+    }
+  }
+});
+window.addEventListener('keyup', (e) => {
+  if (e.code === 'Space') {
+    handleMainPressEnd(e);
+  }
+});
+
+function executeCast() {
+  sound.playCast();
+  const maxDist = getMaxCastDistance();
+  castDistance = 5 + (castPower / 100) * (maxDist - 5);
+  const waterTopY = canvas.height * 0.48;
+  const waterBottomY = canvas.height * 0.82;
+  const ratio = Math.min(1, castDistance / 100);
+
+  bobberPos.targetX = canvas.width * (0.25 + ratio * 0.55);
+  bobberPos.targetY = waterBottomY - ratio * (waterBottomY - waterTopY - 25);
+  bobberPos.x = canvas.width * 0.12;
+  bobberPos.y = canvas.height * 0.65;
+  bobberPos.vy = -12;
+  bobberPos.submerge = 0;
+
+  hookedItem = selectRandomItem(castDistance);
+  waitTimer = 1.8 + Math.random() * 2.5;
+  nibbleCount = 0;
+  maxNibbles = 1 + Math.floor(Math.random() * 2);
+
+  targetShadow = {
+    x: bobberPos.targetX + (Math.random() < 0.5 ? 120 : -120),
+    y: bobberPos.targetY + 30,
+    size: 20 + hookedItem.rarity * 6,
+    wiggle: 0
+  };
+
+  gameState = 'WAITING';
+  updateUIForState();
+
+  setTimeout(() => {
+    if (gameState === 'WAITING') {
+      sound.playSplash();
+      addRipple(bobberPos.targetX, bobberPos.targetY, 55, 0.8);
+      addSplash(bobberPos.targetX, bobberPos.targetY, 10);
+    }
+  }, 240);
+}
+
+function startFight() {
+  sound.playSplash();
+  addSplash(bobberPos.x, bobberPos.y, 18);
+  addRipple(bobberPos.x, bobberPos.y, 70, 0.9);
+  screenShake = 8;
+
+  itemDistance = castDistance;
+  tension = 35;
+  isReeling = false;
+  itemStruggling = false;
+  itemStateTimer = 1.6 + Math.random() * 1.4;
+
+  gameState = 'FIGHTING';
+  updateUIForState();
+}
+
+function resetToIdle(msg = null) {
+  gameState = 'IDLE';
+  isReeling = false;
+  itemStruggling = false;
+  targetShadow = null;
+  rodBend = 0;
+  updateUIForState();
+  if (msg) setStatus(msg, 'text-rose-300');
+}
+
+function toggleMute() {
+  const isMuted = sound.toggleMute();
+  document.getElementById('muteBtn').textContent = isMuted ? '🔇' : '🔊';
+}
+
+let lastTimestamp = performance.now();
+
+function gameLoop(now) {
+  const dt = Math.min(0.05, (now - lastTimestamp) / 1000);
+  lastTimestamp = now;
+
+  updateGameLogic(dt, now / 1000);
+  renderScene(now / 1000);
+
+  requestAnimationFrame(gameLoop);
+}
+
+function updateGameLogic(dt, elapsed) {
+  if (gameState === 'CASTING') {
+    castPower += castDirection * 130 * dt;
+    if (castPower >= 100) {
+      castPower = 100;
+      castDirection = -1;
+    } else if (castPower <= 0) {
+      castPower = 0;
+      castDirection = 1;
+    }
+    castBar.style.width = `${castPower}%`;
+    const previewDist = (5 + (castPower / 100) * (getMaxCastDistance() - 5)).toFixed(1);
+    castDistancePreview.textContent = `飛距離: ${previewDist}m`;
+    rodBend = -0.35 * (castPower / 100);
+  }
+
+  if (gameState === 'WAITING') {
+    bobberPos.x += (bobberPos.targetX - bobberPos.x) * 8 * dt;
+    bobberPos.y += (bobberPos.targetY - bobberPos.y) * 8 * dt;
+    bobberPos.submerge += (0 - bobberPos.submerge) * 6 * dt;
+    rodBend += (0.08 - rodBend) * 5 * dt;
+
+    if (targetShadow) {
+      const dx = bobberPos.x - targetShadow.x;
+      const dy = (bobberPos.y + 18) - targetShadow.y;
+      targetShadow.x += dx * 1.1 * dt;
+      targetShadow.y += dy * 1.1 * dt;
+      targetShadow.wiggle += dt * 7;
+    }
+
+    waitTimer -= dt;
+    if (waitTimer <= 0) {
+      if (nibbleCount < maxNibbles) {
+        nibbleCount++;
+        sound.playNibble();
+        bobberPos.submerge = 7;
+        addRipple(bobberPos.x, bobberPos.y, 32, 0.65);
+        setStatus('ツンツン… 何かが触れている！', 'text-amber-200');
+        waitTimer = 0.6 + Math.random() * 0.8;
+      } else {
+        gameState = 'BITING';
+        biteWindowTimer = 2.8;
+        bobberPos.submerge = 22;
+        sound.playBiteAlert();
+        addSplash(bobberPos.x, bobberPos.y, 14);
+        addRipple(bobberPos.x, bobberPos.y, 60, 0.9);
+        screenShake = 5;
+        updateUIForState();
+      }
+    }
+  }
+
+  if (gameState === 'BITING') {
+    biteWindowTimer -= dt;
+    bobberPos.submerge = 20 + Math.sin(elapsed * 45) * 4;
+    rodBend = 0.25;
+    if (Math.random() < 0.3) addRipple(bobberPos.x, bobberPos.y, 40, 0.5);
+
+    if (biteWindowTimer <= 0) {
+      sound.playFail();
+      resetToIdle('💨 アワセ遅れた！逃げてしまった…');
+    }
+  }
+
+  if (gameState === 'FIGHTING') {
+    itemStateTimer -= dt;
+    if (itemStateTimer <= 0) {
+      itemStruggling = !itemStruggling;
+      if (itemStruggling) {
+        itemStateTimer = 1.0 + Math.random() * 0.8;
+        itemStateBadge.className = 'px-3 py-1 rounded-full text-xs font-black bg-rose-500/30 text-rose-300 border border-rose-500 animate-pulse';
+        itemStateBadge.textContent = '🔥 強い引き！少し手を離そう';
+        addSplash(bobberPos.x, bobberPos.y, 10);
+      } else {
+        itemStateTimer = 2.2 + Math.random() * 1.5;
+        itemStateBadge.className = 'px-3 py-1 rounded-full text-xs font-black bg-amber-500/20 text-amber-300 border border-amber-500/40';
+        itemStateBadge.textContent = '🍃 穏やかな流れ（巻き時！）';
+      }
+    }
+
+    const rodResist = 1 + (saveData.rodLv - 1) * 0.14;
+    const reelSpeed = 16.5 * (1 + (saveData.reelLv - 1) * 0.12);
+    const itemPull = hookedItem.power * (itemStruggling ? 1.1 : 0.4);
+
+    if (isReeling) {
+      sound.playReelTick(tension / 100);
+      const tensionGain = (itemStruggling ? 24 : 9) * (hookedItem.power * 0.32) / rodResist;
+      tension += tensionGain * dt;
+      const pullProgress = itemStruggling ? reelSpeed * 0.45 : reelSpeed;
+      itemDistance -= pullProgress * dt;
+    } else {
+      const tensionDrop = itemStruggling ? 22 : 38;
+      tension -= tensionDrop * dt;
+      if (itemStruggling) {
+        itemDistance += itemPull * 0.4 * dt;
+      }
+    }
+
+    const waterTopY = canvas.height * 0.48;
+    const waterBottomY = canvas.height * 0.85;
+    const distRatio = Math.max(0, Math.min(1, itemDistance / 100));
+    const targetX = canvas.width * (0.22 + distRatio * 0.55) + (itemStruggling ? Math.sin(elapsed * 25) * 16 : Math.sin(elapsed * 5) * 6);
+    const targetY = waterBottomY - distRatio * (waterBottomY - waterTopY - 20);
+    bobberPos.x += (targetX - bobberPos.x) * 6 * dt;
+    bobberPos.y += (targetY - bobberPos.y) * 6 * dt;
+
+    if (itemStruggling && Math.random() < 0.35) {
+      addSplash(bobberPos.x, bobberPos.y, 4);
+      addRipple(bobberPos.x, bobberPos.y, 45, 0.6);
+      screenShake = 2.5;
+    }
+
+    rodBend = 0.35 + (tension / 100) * 0.55;
+    tension = Math.max(12, Math.min(100, tension));
+    distanceDisplay.innerHTML = `${Math.max(0, itemDistance).toFixed(1)}<span class="text-xs ml-0.5">m</span>`;
+    tensionBar.style.width = `${tension}%`;
+    tensionPercent.textContent = `${Math.round(tension)}%`;
+
+    if (tension >= 100) {
+      sound.playFail();
+      screenShake = 12;
+      resetToIdle('💥 ブチッ！！テンション限界で糸が切れた…');
+      return;
+    }
+
+    if (itemDistance <= 0) {
+      completeCatch();
+      return;
+    }
+  }
+
+  bgShadows.forEach(s => {
+    s.x += s.speed * 32 * dt;
+    s.wiggle += dt * 4;
+    if (s.speed > 0 && s.x > canvas.width + 60) s.x = -60;
+    if (s.speed < 0 && s.x < -60) s.x = canvas.width + 60;
+  });
+
+  ripples.forEach(r => {
+    r.r += 28 * dt;
+    r.alpha -= 0.45 * dt;
+  });
+  ripples = ripples.filter(r => r.alpha > 0);
+
+  splashes.forEach(p => {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy += 0.35;
+    p.life -= 1.8 * dt;
+  });
+  splashes = splashes.filter(p => p.life > 0);
+
+  if (screenShake > 0) {
+    screenShake = Math.max(0, screenShake - 35 * dt);
+  }
+}
+
+function renderScene(elapsed) {
+  const w = canvas.width;
+  const h = canvas.height;
+  const horizonY = h * 0.48;
+
+  ctx.save();
+  if (screenShake > 0) {
+    ctx.translate((Math.random() - 0.5) * screenShake, (Math.random() - 0.5) * screenShake);
+  }
+
+  // 和モダン夕暮れ・秋空背景
+  const skyGrad = ctx.createLinearGradient(0, 0, 0, horizonY);
+  skyGrad.addColorStop(0, '#1e1b4b');
+  skyGrad.addColorStop(0.5, '#7c2d12');
+  skyGrad.addColorStop(1, '#fb923c');
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(0, 0, w, horizonY);
+
+  // 黄金の満月/太陽
+  const sunX = w * 0.72;
+  const sunY = h * 0.32;
+  const sunGlow = ctx.createRadialGradient(sunX, sunY, 5, sunX, sunY, 95);
+  sunGlow.addColorStop(0, '#fef08a');
+  sunGlow.addColorStop(0.4, 'rgba(253, 186, 116, 0.45)');
+  sunGlow.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = sunGlow;
+  ctx.beginPath();
+  ctx.arc(sunX, sunY, 95, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = '#fef9c3';
+  ctx.beginPath();
+  ctx.arc(sunX, sunY, 26, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 遠景の山・城シルエット
+  ctx.fillStyle = 'rgba(28, 15, 10, 0.75)';
+  ctx.beginPath();
+  ctx.moveTo(0, horizonY);
+  ctx.lineTo(0, horizonY - 35);
+  ctx.quadraticCurveTo(w * 0.25, horizonY - 85, w * 0.5, horizonY - 30);
+  ctx.quadraticCurveTo(w * 0.78, horizonY - 75, w, horizonY - 25);
+  ctx.lineTo(w, horizonY);
+  ctx.closePath();
+  ctx.fill();
+
+  // 黄金と翡翠の川面グラデーション
+  const waterGrad = ctx.createLinearGradient(0, horizonY, 0, h);
+  waterGrad.addColorStop(0, '#0f766e');
+  waterGrad.addColorStop(0.5, '#115e59');
+  waterGrad.addColorStop(1, '#042f2e');
+  ctx.fillStyle = waterGrad;
+  ctx.fillRect(0, horizonY, w, h - horizonY);
+
+  // 水面の光の反射
+  for (let i = 0; i < 16; i++) {
+    const wy = horizonY + 12 + i * ((h - horizonY) / 16);
+    const waveOffset = Math.sin(elapsed * 2.5 + i) * 25;
+    const widthFactor = 25 + i * 5;
+    ctx.fillStyle = `rgba(254, 240, 138, ${0.16 - i * 0.008})`;
+    ctx.fillRect(sunX - widthFactor / 2 + waveOffset, wy, widthFactor, 2.5);
+  }
+
+  // 水中の影
+  bgShadows.forEach(s => {
+    drawShadow(s.x, s.y, s.size, s.speed > 0 ? 1 : -1, s.wiggle, 0.22);
+  });
+
+  if (targetShadow && (gameState === 'WAITING' || gameState === 'BITING')) {
+    const dir = bobberPos.x >= targetShadow.x ? 1 : -1;
+    drawShadow(targetShadow.x, targetShadow.y, targetShadow.size, dir, targetShadow.wiggle, 0.45);
+  }
+
+  // 波紋
+  ripples.forEach(r => {
+    ctx.strokeStyle = `rgba(254, 240, 138, ${r.alpha})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(r.x, r.y, r.r, r.r * 0.38, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+
+  // 手前の木製桟橋・デッキ
+  ctx.fillStyle = '#2b1810';
+  ctx.beginPath();
+  ctx.moveTo(0, h);
+  ctx.lineTo(0, h * 0.84);
+  ctx.lineTo(w * 0.36, h * 0.92);
+  ctx.lineTo(w * 0.42, h);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = '#78350f';
+  ctx.lineWidth = 4;
+  ctx.stroke();
+
+  // 釣り竿・リール・撒き餌（ウキ/ルアー）の描画
+  const rodBaseX = w * 0.12;
+  const rodBaseY = h * 0.96;
+  const rodLength = Math.min(w * 0.35, 240) + (saveData.rodLv - 1) * 4;
+  const rodTipX = rodBaseX + rodLength * 0.65 + rodBend * 65;
+  const rodTipY = rodBaseY - rodLength * 0.95 + rodBend * 110;
+  const ctrlX = rodBaseX + rodLength * 0.25;
+  const ctrlY = rodBaseY - rodLength * 0.75;
+
+  // ロッドランクごとの見た目設定
+  const rodThemes = [
+    { base: '#78350f', accent: '#f59e0b', glow: null, width: 10 },
+    { base: '#451a03', accent: '#10b981', glow: null, width: 11 },
+    { base: '#7f1d1d', accent: '#fbbf24', glow: 'rgba(251, 191, 36, 0.35)', width: 12 },
+    { base: '#1e1b4b', accent: '#38bdf8', glow: 'rgba(56, 189, 248, 0.45)', width: 13 },
+    { base: '#3b0764', accent: '#f472b6', glow: 'rgba(244, 114, 182, 0.6)', width: 14 }
+  ];
+  const rTheme = rodThemes[Math.min(rodThemes.length - 1, Math.floor((saveData.rodLv - 1) / 2))];
+
+  // 撒き餌（ウキ＆集魚エフェクト）の見た目設定
+  const lureThemes = [
+    { top: '#dc2626', bottom: '#fef3c7', ring: null, aura: null, size: 7 },
+    { top: '#059669', bottom: '#d1fae5', ring: '#34d399', aura: 'rgba(52, 211, 153, 0.25)', size: 8 },
+    { top: '#0284c7', bottom: '#e0f2fe', ring: '#38bdf8', aura: 'rgba(56, 189, 248, 0.35)', size: 9 },
+    { top: '#d97706', bottom: '#fef08a', ring: '#facc15', aura: 'rgba(250, 204, 21, 0.45)', size: 10 },
+    { top: '#db2777', bottom: '#fdf2f8', ring: '#f472b6', aura: 'rgba(244, 114, 182, 0.55)', size: 11 }
+  ];
+  const lTheme = lureThemes[Math.min(lureThemes.length - 1, Math.floor((saveData.lureLv - 1) / 2))];
+
+  if (gameState === 'WAITING' || gameState === 'BITING' || gameState === 'FIGHTING') {
+    const bobberFloatY = bobberPos.y + Math.sin(elapsed * 4) * 2.5 + bobberPos.submerge;
+    let lineColor = saveData.rodLv >= 5 ? 'rgba(253, 224, 71, 0.9)' : 'rgba(254, 243, 199, 0.85)';
+    if (gameState === 'FIGHTING') {
+      if (tension > 75) lineColor = '#ef4444';
+      else if (tension > 50) lineColor = '#facc15';
+      else lineColor = '#34d399';
+    }
+
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = gameState === 'FIGHTING' ? 2.4 : 1.6;
+    ctx.beginPath();
+    ctx.moveTo(rodTipX, rodTipY);
+    const sagY = gameState === 'FIGHTING' ? (rodTipY + bobberFloatY) * 0.5 : Math.max(rodTipY, bobberFloatY) + 18;
+    ctx.quadraticCurveTo((rodTipX + bobberPos.x) * 0.5, sagY, bobberPos.x, bobberFloatY);
+    ctx.stroke();
+
+    // 撒き餌（ウキ周辺の水中の集魚オーラ＆撒き餌粒）
+    if (lTheme.aura && gameState === 'WAITING') {
+      const pulse = 1 + Math.sin(elapsed * 5) * 0.15;
+      const auraGrad = ctx.createRadialGradient(bobberPos.x, bobberFloatY + 12, 2, bobberPos.x, bobberFloatY + 12, 36 * pulse);
+      auraGrad.addColorStop(0, lTheme.aura);
+      auraGrad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = auraGrad;
+      ctx.beginPath();
+      ctx.arc(bobberPos.x, bobberFloatY + 12, 36 * pulse, 0, Math.PI * 2);
+      ctx.fill();
+
+      for (let k = 0; k < saveData.lureLv; k++) {
+        const bx = bobberPos.x + Math.sin(elapsed * 2 + k * 1.7) * (10 + k * 2.5);
+        const by = bobberFloatY + 10 + Math.cos(elapsed * 3 + k * 2.1) * 8;
+        ctx.fillStyle = lTheme.ring || '#fef08a';
+        ctx.beginPath();
+        ctx.arc(bx, by, 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    if (bobberPos.submerge < 18) {
+      ctx.save();
+      ctx.translate(bobberPos.x, bobberFloatY);
+      ctx.fillStyle = lTheme.bottom;
+      ctx.beginPath();
+      ctx.arc(0, 0, lTheme.size, 0, Math.PI);
+      ctx.fill();
+      ctx.fillStyle = lTheme.top;
+      ctx.beginPath();
+      ctx.arc(0, 0, lTheme.size, Math.PI, Math.PI * 2);
+      ctx.fill();
+      if (lTheme.ring) {
+        ctx.strokeStyle = lTheme.ring;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(-lTheme.size, 0);
+        ctx.lineTo(lTheme.size, 0);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = '#facc15';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(0, -lTheme.size);
+      ctx.lineTo(0, -lTheme.size - 9);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // 竿のオーラ（Lv3以上）
+  if (rTheme.glow) {
+    ctx.save();
+    ctx.strokeStyle = rTheme.glow;
+    ctx.lineWidth = rTheme.width + 10;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(rodBaseX, rodBaseY);
+    ctx.quadraticCurveTo(ctrlX, ctrlY, rodTipX, rodTipY);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // 釣り竿本体
+  ctx.strokeStyle = rTheme.base;
+  ctx.lineWidth = rTheme.width;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(rodBaseX, rodBaseY);
+  ctx.quadraticCurveTo(ctrlX, ctrlY, rodTipX, rodTipY);
+  ctx.stroke();
+
+  // 竿の装飾ライン
+  ctx.strokeStyle = rTheme.accent;
+  ctx.lineWidth = 3.5;
+  ctx.beginPath();
+  ctx.moveTo(rodBaseX, rodBaseY);
+  ctx.quadraticCurveTo(ctrlX, ctrlY, rodTipX, rodTipY);
+  ctx.stroke();
+
+  // ガイドリング装飾
+  const guideCount = 2 + Math.floor(saveData.rodLv / 2);
+  ctx.fillStyle = '#fef08a';
+  for (let g = 1; g <= guideCount; g++) {
+    const t = g / (guideCount + 1);
+    const gx = (1 - t) * (1 - t) * rodBaseX + 2 * (1 - t) * t * ctrlX + t * t * rodTipX;
+    const gy = (1 - t) * (1 - t) * rodBaseY + 2 * (1 - t) * t * ctrlY + t * t * rodTipY;
+    ctx.beginPath();
+    ctx.arc(gx, gy - 4, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // リール本体描画
+  const reelX = rodBaseX + (ctrlX - rodBaseX) * 0.45;
+  const reelY = rodBaseY + (ctrlY - rodBaseY) * 0.45 + 6;
+  const reelColors = ['#94a3b8', '#34d399', '#38bdf8', '#fbbf24', '#f472b6'];
+  const reelColor = reelColors[Math.min(reelColors.length - 1, Math.floor((saveData.reelLv - 1) / 2))];
+  const reelRadius = 11 + Math.floor(saveData.reelLv / 3);
+
+  ctx.save();
+  ctx.translate(reelX, reelY);
+  ctx.fillStyle = '#1c1917';
+  ctx.beginPath();
+  ctx.arc(0, 0, reelRadius + 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = reelColor;
+  ctx.beginPath();
+  ctx.arc(0, 0, reelRadius, 0, Math.PI * 2);
+  ctx.fill();
+  const handleAngle = isReeling ? elapsed * 22 : elapsed * 0.5;
+  ctx.strokeStyle = '#fef3c7';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(Math.cos(handleAngle) * (reelRadius + 6), Math.sin(handleAngle) * (reelRadius + 6));
+  ctx.stroke();
+  ctx.restore();
+
+  splashes.forEach(p => {
+    ctx.fillStyle = `rgba(254, 243, 199, ${p.life})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  ctx.restore();
+}
+
+function drawShadow(x, y, size, dir, wiggle, alpha) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(dir, 1);
+  ctx.fillStyle = `rgba(2, 44, 34, ${alpha})`;
+  const tailSwing = Math.sin(wiggle) * (size * 0.16);
+
+  ctx.beginPath();
+  ctx.ellipse(0, 0, size * 0.65, size * 0.26, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(-size * 0.55, 0);
+  ctx.lineTo(-size * 0.95, -size * 0.25 + tailSwing);
+  ctx.lineTo(-size * 0.95, size * 0.25 + tailSwing);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawItemIllustration(targetCanvas, item) {
+  const fCtx = targetCanvas.getContext('2d');
+  const w = targetCanvas.width;
+  const h = targetCanvas.height;
+  fCtx.clearRect(0, 0, w, h);
+
+  fCtx.save();
+  fCtx.translate(w * 0.5, h * 0.5);
+
+  const [primary, secondary, accent] = item.colors;
+
+  if (item.shape === 'gosyuin') {
+    // 御朱印帳型
+    fCtx.fillStyle = primary;
+    fCtx.fillRect(-45, -35, 90, 70);
+    fCtx.strokeStyle = accent;
+    fCtx.lineWidth = 3;
+    fCtx.strokeRect(-45, -35, 90, 70);
+
+    // 帯
+    fCtx.fillStyle = secondary;
+    fCtx.fillRect(-15, -35, 30, 70);
+
+    // モチーフアイコン
+    fCtx.fillStyle = accent;
+    fCtx.beginPath();
+    fCtx.arc(0, 0, 14, 0, Math.PI * 2);
+    fCtx.fill();
+  } else if (item.shape === 'shinto') {
+    // 神棚型
+    fCtx.fillStyle = primary;
+    fCtx.fillRect(-35, -20, 70, 45);
+    fCtx.fillStyle = secondary;
+    fCtx.beginPath();
+    fCtx.moveTo(-45, -20);
+    fCtx.lineTo(0, -42);
+    fCtx.lineTo(45, -20);
+    fCtx.closePath();
+    fCtx.fill();
+  } else if (item.shape === 'shelf') {
+    // 推し棚
+    fCtx.fillStyle = primary;
+    fCtx.fillRect(-50, 15, 100, 10);
+    fCtx.fillRect(-40, -10, 80, 8);
+    fCtx.fillStyle = secondary;
+    fCtx.fillRect(-25, -35, 50, 25);
+  } else if (item.shape === 'box') {
+    // 賽銭箱
+    fCtx.fillStyle = primary;
+    fCtx.fillRect(-40, -20, 80, 45);
+    fCtx.fillStyle = '#140b07';
+    fCtx.fillRect(-15, -20, 30, 6);
+  } else if (item.shape === 'band') {
+    // バンド
+    fCtx.fillStyle = primary;
+    fCtx.fillRect(-55, -12, 110, 24);
+    fCtx.fillStyle = secondary;
+    fCtx.beginPath();
+    fCtx.arc(0, 0, 14, 0, Math.PI * 2);
+    fCtx.fill();
+  } else {
+    // チャーム
+    fCtx.fillStyle = secondary;
+    fCtx.beginPath();
+    fCtx.arc(0, -10, 8, 0, Math.PI * 2);
+    fCtx.fill();
+    fCtx.fillStyle = primary;
+    fCtx.beginPath();
+    fCtx.arc(0, 10, 22, 0, Math.PI * 2);
+    fCtx.fill();
+  }
+
+  fCtx.restore();
+}
+
+function completeCatch() {
+  gameState = 'RESULT';
+  isReeling = false;
+  sound.playSuccess(hookedItem.rarity);
+
+  lastEarnedGold = hookedItem.basePrice;
+
+  const prev = saveData.dex[hookedItem.id];
+  const isNew = !prev;
+  saveData.dex[hookedItem.id] = { count: (prev ? prev.count : 0) + 1 };
+  writeSaveData();
+
+  document.getElementById('newRecordBadge').classList.toggle('hidden', !isNew);
+  document.getElementById('resultRarity').textContent = '★'.repeat(hookedItem.rarity) + '☆'.repeat(5 - hookedItem.rarity);
+  document.getElementById('resultItemName').textContent = hookedItem.name;
+  document.getElementById('resultType').textContent = hookedItem.type;
+  document.getElementById('resultPrice').textContent = `+${lastEarnedGold.toLocaleString()} 文`;
+  document.getElementById('resultDesc').textContent = hookedItem.desc;
+  document.getElementById('resultShopLink').href = hookedItem.url;
+
+  drawItemIllustration(document.getElementById('resultItemCanvas'), hookedItem);
+  document.getElementById('resultModal').classList.remove('hidden');
+}
+
+function closeResultModal() {
+  saveData.gold += lastEarnedGold;
+  writeSaveData();
+  document.getElementById('resultModal').classList.add('hidden');
+  resetToIdle();
+}
+
+function shareOnX() {
+  const text = encodeURIComponent(`moku-zakkaの釣魚庵で「${hookedItem.name}」を釣り上げました！木製御朱印帳や推し活グッズもチェック！ #mokuzakka #名工銘鈑 #御朱印帳`);
+  const url = encodeURIComponent(hookedItem.url);
+  window.open(`https://twitter.com/intent/tweet?text=${text}&url=${url}`, '_blank');
+}
+
+function openModal(id) {
+  if (id === 'shopModal') renderShop();
+  if (id === 'dexModal') renderDex();
+  document.getElementById(id).classList.remove('hidden');
+}
+
+function closeModal(id) {
+  document.getElementById(id).classList.add('hidden');
+}
+
+function renderShop() {
+  document.getElementById('shopGoldDisplay').textContent = saveData.gold.toLocaleString();
+  const container = document.getElementById('shopItemsContainer');
+  container.innerHTML = '';
+
+  const keys = ['rod', 'reel', 'lure'];
+  keys.forEach(key => {
+    const cfg = UPGRADE_CONFIG[key];
+    const currentLv = saveData[`${key}Lv`];
+    const isMax = currentLv >= cfg.maxLevel;
+    const cost = Math.round(cfg.baseCost * Math.pow(cfg.costMult, currentLv - 1));
+    const canAfford = !isMax && saveData.gold >= cost;
+
+    const card = document.createElement('div');
+    card.className = 'bg-[#1a0f0a] border border-amber-900/80 rounded-2xl p-4 flex flex-col gap-2 shadow-inner';
+    card.innerHTML = `
+      <div class="flex justify-between items-start">
+        <div class="flex items-center gap-2.5">
+          <span class="text-2xl bg-[#2b1810] p-2 rounded-xl border border-amber-800/60">${cfg.icon}</span>
+          <div>
+            <div class="font-black text-amber-100 text-sm sm:text-base">${cfg.name} <span class="text-amber-400 text-xs ml-1">Lv.${currentLv}/${cfg.maxLevel}</span></div>
+            <div class="text-[11px] text-amber-200/70">${cfg.desc}</div>
+          </div>
+        </div>
+      </div>
+      <div class="text-[11px] font-bold text-amber-300 bg-[#2b1810] px-3 py-1.5 rounded-xl border border-amber-800/50">
+        効果: ${cfg.getEffectText(currentLv)}
+      </div>
+      <button onclick="buyUpgrade('${key}')" ${!canAfford ? 'disabled' : ''}
+        class="mt-1 w-full py-2.5 rounded-xl font-black text-xs sm:text-sm transition ${
+          isMax
+            ? 'bg-stone-800 text-stone-400 cursor-default border border-stone-700'
+            : canAfford
+              ? 'action-btn bg-gradient-to-b from-amber-400 via-amber-500 to-amber-700 text-slate-950 shadow-md border border-amber-200'
+              : 'bg-stone-900 text-stone-500 cursor-not-allowed border border-stone-800'
+        }">
+        ${isMax ? 'MAX レベル達成' : `強化する（🪙 ${cost.toLocaleString()} 文）`}
+      </button>
+    `;
+    container.appendChild(card);
+  });
+}
+
+function buyUpgrade(key) {
+  const cfg = UPGRADE_CONFIG[key];
+  const currentLv = saveData[`${key}Lv`];
+  if (currentLv >= cfg.maxLevel) return;
+
+  const cost = Math.round(cfg.baseCost * Math.pow(cfg.costMult, currentLv - 1));
+  if (saveData.gold < cost) return;
+
+  saveData.gold -= cost;
+  saveData[`${key}Lv`] = currentLv + 1;
+  writeSaveData();
+  sound.playBuy();
+
+  renderShop();
+  updateUIForState();
+}
+
+function renderDex() {
+  const container = document.getElementById('dexGridContainer');
+  container.innerHTML = '';
+
+  const caught = Object.keys(saveData.dex).length;
+  const pct = Math.round((caught / ITEM_DATABASE.length) * 100);
+  document.getElementById('dexCompletionText').textContent = `${caught} / ${ITEM_DATABASE.length} 種類 (${pct}%)`;
+
+  ITEM_DATABASE.forEach(item => {
+    const record = saveData.dex[item.id];
+    const card = document.createElement('div');
+    card.className = `rounded-2xl p-3 border flex flex-col items-center justify-between text-center ${
+      record ? 'bg-[#2b1810]/90 border-amber-500/60 shadow-lg' : 'bg-[#140b07]/70 border-amber-950/80 opacity-60'
+    }`;
+
+    const stars = '★'.repeat(item.rarity) + '☆'.repeat(5 - item.rarity);
+
+    if (record) {
+      const miniCanvas = document.createElement('canvas');
+      miniCanvas.width = 140;
+      miniCanvas.height = 70;
+      miniCanvas.className = 'w-full h-16 my-1';
+      drawItemIllustration(miniCanvas, item);
+
+      card.innerHTML = `
+        <div class="w-full">
+          <div class="text-[10px] text-amber-400 font-bold">${stars}</div>
+          <div class="font-black text-amber-100 text-xs sm:text-sm line-clamp-1">${item.name}</div>
+        </div>
+      `;
+      card.appendChild(miniCanvas);
+
+      const footerDiv = document.createElement('div');
+      footerDiv.className = 'w-full space-y-1.5 mt-1';
+      footerDiv.innerHTML = `
+        <div class="w-full text-[10px] text-amber-300/80 bg-[#3e2317] rounded-lg py-0.5 border border-amber-800/50">
+          発見: <b>${record.count}回</b> / ${item.basePrice.toLocaleString()}文
+        </div>
+        <a href="${item.url}" target="_blank" class="block w-full bg-gradient-to-b from-amber-400 to-amber-600 hover:from-amber-300 hover:to-amber-500 text-slate-950 font-black text-[11px] py-1.5 rounded-xl shadow transition">
+          🛒 商品ページへ
+        </a>
+      `;
+      card.appendChild(footerDiv);
+    } else {
+      card.innerHTML = `
+        <div class="text-[10px] text-amber-700/80 font-bold">${stars}</div>
+        <div class="font-black text-amber-800 text-sm">？？？</div>
+        <div class="w-full h-16 my-1 flex items-center justify-center text-2xl text-amber-900 font-black">?</div>
+        <div class="w-full text-[10px] text-amber-800/70 bg-[#1a0f0a] rounded-xl py-1 mt-1 border border-amber-950">未発見</div>
+      `;
+    }
+    container.appendChild(card);
+  });
+}
+
+window.onload = function() {
+  loadSaveData();
+  resizeCanvas();
+  updateUIForState();
+  requestAnimationFrame(gameLoop);
+};
+</script>
+</body>
+</html>
